@@ -1,0 +1,42 @@
+[project]
+name = "memory-engine"
+version = "0.1.0"
+description = "Ontology-governed graph memory for coding agents (Ladybug or Neo4j + LinkML)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "ladybug>=0.22",
+    "platformdirs>=4.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+neo4j = ["neo4j>=5.20"]
+
+[project.scripts]
+memory-engine = "memory_engine.cli:main"
+mem = "memory_engine.cli:main"
+
+[dependency-groups]
+dev = [
+    "neo4j>=5.20",
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memory_engine"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"ontology" = "memory_engine/ontology"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs a running Neo4j (docker compose up -d); skipped otherwise",
+    "ladybug: embedded Ladybug database tests (no server needed)",
+]

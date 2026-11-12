@@ -1,0 +1,306 @@
+id: https://example.org/workgraph
+name: workgraph
+title: Work Graph Ontology (v0.2, minimal)
+description: >-
+  Minimal ontology for an agentic program-management graph.
+  6 node classes, 6 edge types. One root (Project), two typed trees under it,
+  and a few links between them.
+  Work tree: Project > initiative > epic (optional) > task / bug.
+  Goal tree: Project > objective > key_result.
+  Links: initiative serves goals, metric Signals are about key results.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  wg: https://example.org/workgraph/
+default_prefix: wg
+default_range: string
+imports:
+  - linkml:types
+
+# ---------------------------------------------------------------- ENUMS
+enums:
+  Status:
+    description: Shared lifecycle for every node.
+    permissible_values:
+      proposed:
+        description: "Suggested (often by an agent), not yet accepted by a human."
+      active:
+        description: "Currently valid or in progress."
+      done:
+        description: "Completed or achieved."
+      archived:
+        description: "No longer relevant. Kept for history, not used as context."
+
+  GoalLevel:
+    permissible_values:
+      objective:
+        description: "Qualitative outcome the project wants, 1-2 quarters. Answers why the work exists."
+        annotations:
+          allowed_parent: "Project"
+      key_result:
+        description: "Measurable target that proves an objective is met. Must have a target."
+        annotations:
+          allowed_parent: "Goal:objective"
+
+  WorkKind:
+    permissible_values:
+      initiative:
+        description: "Bundle of work pursuing goals. Weeks to months. Must serve at least one goal."
+        annotations:
+          allowed_parent: "Project"
+          requires: "serves"
+      epic:
+        description: "Optional chunk of an initiative, shippable on its own. Skip it for small initiatives."
+        annotations:
+          allowed_parent: "WorkItem:initiative"
+      task:
+        description: "Smallest unit one actor can finish. The default."
+        annotations:
+          allowed_parent: "WorkItem:epic,WorkItem:initiative"
+      bug:
+        description: "Something that was supposed to work and does not."
+        annotations:
+          allowed_parent: "WorkItem:epic,WorkItem:initiative"
+
+  DocKind:
+    permissible_values:
+      spec:
+        description: "Defines what to build and how it must behave."
+      design:
+        description: "Visual or structural design artifact (mockup, flow, architecture)."
+      guideline:
+        description: "Standing rule or convention (brand, code style, process)."
+      reference:
+        description: "Background material that does not prescribe anything."
+
+  SignalKind:
+    permissible_values:
+      metric:
+        description: "A measured number at a point in time. Link it to a key result with about."
+      feedback:
+        description: "What a user, customer or stakeholder said."
+      research:
+        description: "Synthesized finding from interviews, analysis or market study."
+      experiment:
+        description: "Result of a test with a hypothesis and outcome."
+
+  ActorKind:
+    permissible_values:
+      person:
+        description: "A human."
+      team:
+        description: "A group of actors. Members link to it with part_of."
+      agent:
+        description: "An AI agent with its own identity, so its changes are attributable."
+
+  Role:
+    description: Access level of an Actor on a Project. Stored as the `role` property of the member_of edge.
+    permissible_values:
+      admin:
+        description: "Manage members and structure, accept agent proposals, archive anything."
+      contributor:
+        description: "Create and edit nodes. Default for agents, whose new nodes start as proposed."
+      viewer:
+        description: "Read only."
+
+# ---------------------------------------------------------------- SLOTS
+slots:
+  id:
+    identifier: true
+    description: Stable unique id. Never reuse.
+  title:
+    required: true
+    description: Short name, under 80 chars. Must make sense without its parent.
+  summary:
+    required: true
+    description: >-
+      1-3 sentences stating what this node is and why it matters.
+      This is what agents read first when building context, so keep it self-contained.
+  status:
+    range: Status
+    required: true
+  created_at: {range: datetime}
+  updated_at: {range: datetime}
+  target:
+    description: For key_result. Measurable success condition with number and date, e.g. "Activation rate >= 40% by 2027-03-31".
+  acceptance_criteria:
+    description: For WorkItem. Checkable conditions for "done".
+  due: {range: date}
+  uri:
+    description: For Document. Where the full content lives (path, URL, file id). The graph stores the summary, not the body.
+  observed_at: {range: datetime}
+  value:
+    description: For Signal. The measured value or the key quote or finding.
+  source:
+    description: For Signal. Where it came from (tool, person, channel, link).
+  handle:
+    description: For Actor. Email, username or agent id.
+
+  # ---- edges (graph relationship types), direction is source -> target.
+  # Target classes are set per source class in slot_usage.
+  part_of:
+    multivalued: false
+    description: >-
+      Containment. "This lives inside that." The tree skeleton: task part_of epic or initiative,
+      epic part_of initiative, key_result part_of objective, person part_of team.
+      Initiatives, objectives, documents and signals are part_of the Project.
+      Exactly one parent per node. Every node except the Project has one,
+      so every chain ends at the root.
+    annotations: {edge: true}
+  serves:
+    range: Goal
+    multivalued: true
+    description: >-
+      Purpose link. "This exists to achieve that goal." An initiative serves one or more
+      objectives or key results; epics and tasks inherit it through part_of.
+    annotations: {edge: true}
+  depends_on:
+    range: WorkItem
+    multivalued: true
+    description: >-
+      Hard prerequisite. "Cannot finish or start until that is done."
+      Use only for real blocking. If it is just related, use `about`.
+    annotations: {edge: true}
+  about:
+    multivalued: true
+    description: >-
+      Subject link. "This talks about that." A spec Document about an initiative,
+      a metric Signal about a key result, feedback about a task or the Project.
+    annotations: {edge: true}
+  member_of:
+    multivalued: true
+    description: >-
+      Access link. "This Actor works on that Project, with this role."
+      Carries a required `role` property (admin, contributor or viewer).
+      A team can be a member, so its people inherit the role through part_of.
+      Different from owned_by: membership grants access, ownership assigns accountability.
+    annotations:
+      edge: true
+      edge_properties: "role: Role (required)"
+  owned_by:
+    range: Actor
+    multivalued: false
+    description: Accountability. "This Actor answers for it." One owner per node.
+    annotations: {edge: true}
+
+# ---------------------------------------------------------------- CLASSES
+classes:
+  Node:
+    abstract: true
+    description: Shared fields only. Hidden from generated output, inlined into every concrete class.
+    slots: [id, title, summary, status, created_at, updated_at, owned_by]
+
+  Project:
+    is_a: Node
+    description: "WHAT: The root of everything: one product or effort. BRANCH: root."
+    annotations:
+      branch: root
+      use_when: >-
+        Starting a new product or effort. Describe it in the summary. Create it first;
+        every other node hangs off it, directly or through a parent.
+      not_for: Teams, themes or labels. Use Actor for people and teams.
+
+  Goal:
+    is_a: Node
+    description: "WHAT: A desired outcome: an objective, or a key result that measures it. BRANCH: goals (why)."
+    annotations:
+      branch: goals
+      use_when: >-
+        Recording why work exists or what success looks like. Objective for the outcome,
+        key_result for its measurable proof. This is the only place the "why" lives.
+      not_for: >-
+        Work that someone does (use WorkItem), or raw numbers (use Signal, then link with about).
+    slots: [target, due, part_of]
+    slot_usage:
+      part_of:
+        any_of: [{range: Goal}, {range: Project}]
+        required: true
+    attributes:
+      level: {range: GoalLevel, required: true}
+    rules:
+      - description: A key result must be measurable.
+        preconditions:
+          slot_conditions:
+            level: {equals_string: key_result}
+        postconditions:
+          slot_conditions:
+            target: {required: true}
+
+  WorkItem:
+    is_a: Node
+    description: "WHAT: Anything someone does, from initiative down to task or bug. BRANCH: execution (what and when)."
+    annotations:
+      branch: execution
+      use_when: >-
+        Creating or updating planned work. Start with an initiative that serves a goal;
+        add epics only when an initiative needs structure. Default to kind=task.
+      not_for: Outcomes or targets (Goal), written requirements (Document).
+    slots: [acceptance_criteria, due, part_of, serves, depends_on]
+    slot_usage:
+      part_of:
+        any_of: [{range: WorkItem}, {range: Project}]
+        required: true
+    attributes:
+      kind: {range: WorkKind, required: true}
+    rules:
+      - description: An initiative must serve at least one goal.
+        preconditions:
+          slot_conditions:
+            kind: {equals_string: initiative}
+        postconditions:
+          slot_conditions:
+            serves: {required: true}
+
+  Document:
+    is_a: Node
+    description: "WHAT: A pointer plus summary for long-form content: specs, designs, guidelines, references. BRANCH: knowledge (what is true)."
+    annotations:
+      branch: knowledge
+      use_when: >-
+        Content must be consulted while working. Store the summary here and the body at `uri`.
+        Link to the thing it covers with about.
+      not_for: Observations or numbers (Signal).
+    slots: [uri, part_of, about]
+    slot_usage:
+      part_of:
+        range: Project
+        required: true
+      about:
+        any_of: [{range: WorkItem}, {range: Goal}, {range: Project}]
+    attributes:
+      kind: {range: DocKind, required: true}
+
+  Signal:
+    is_a: Node
+    description: "WHAT: An observation from the world: metric, feedback, research finding or experiment result. BRANCH: evidence (what we learned)."
+    annotations:
+      branch: evidence
+      use_when: >-
+        Capturing something observed rather than planned. Metrics track key results
+        (link with about); record the number in value and the origin in source.
+      not_for: Plans, requirements, or targets (use Goal).
+    slots: [observed_at, value, source, part_of, about]
+    slot_usage:
+      part_of:
+        range: Project
+        required: true
+      about:
+        any_of: [{range: Goal}, {range: WorkItem}, {range: Project}]
+    attributes:
+      kind: {range: SignalKind, required: true}
+
+  Actor:
+    is_a: Node
+    description: "WHAT: Someone who can own or do work: person, team or agent. BRANCH: organization (who)."
+    annotations:
+      branch: organization
+      use_when: >-
+        Resolving ownership or access, routing a question, or attributing a change.
+        Agents get their own Actor so their writes are traceable.
+      not_for: Roles or skills as abstractions. Access levels live on the member_of edge.
+    slots: [handle, part_of, member_of]
+    slot_usage:
+      part_of: {range: Actor}
+      member_of: {range: Project}
+    attributes:
+      kind: {range: ActorKind, required: true}
