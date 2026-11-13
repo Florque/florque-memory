@@ -1,0 +1,398 @@
+id: https://example.org/family_tree
+name: family_tree
+title: Family Tree Ontology (v0.1, GEDCOM-aligned)
+description: >-
+  Genealogy memory: people, the families that link them, the life events that document them,
+  the places those events happened and the sources that prove them.
+  Modelled on the open GEDCOM 7 standard (INDI, FAM, EVEN, PLAC, SOUR, PEDI, QUAY), so data maps
+  to and from genealogy software. One root (FamilyTree) per research tree; every record belongs to one.
+  Relationships go through Family records, as in GEDCOM: a child is child_of a Family, a partner is
+  partner_in a Family. Evidence first: claims start as proposed until a cited source confirms them.
+see_also:
+  - https://gedcom.io/specifications/FamilySearchGEDCOMv7.html
+prefixes:
+  linkml: https://w3id.org/linkml/
+  ft: https://example.org/family_tree/
+default_prefix: ft
+default_range: string
+imports:
+  - linkml:types
+annotations:
+  skill_description: >-
+    Genealogy memory governed by a GEDCOM-aligned family tree ontology: family trees, people,
+    families (couples and their children), life events (birth, marriage, death, census, migration…),
+    places and sources with citations. Use it to recall who is related to whom, what is proven and
+    by which source before researching, and to record new people, events and evidence so the
+    research persists across sessions and agents.
+
+# ---------------------------------------------------------------- ENUMS
+enums:
+  Status:
+    description: Research status of a claim. Nothing is treated as fact until a source confirms it.
+    permissible_values:
+      proposed:
+        description: "Hypothesis or unverified lead (often from an agent or a namesake match). Needs a source."
+      confirmed:
+        description: "Supported by at least one cited source of adequate quality."
+      disputed:
+        description: "Sources conflict, or a previously confirmed claim was challenged. Explain in notes."
+      archived:
+        description: "Disproved or superseded. Kept for history, not used as context."
+
+  Sex:
+    description: GEDCOM SEX values.
+    permissible_values:
+      male:
+        description: "GEDCOM M."
+      female:
+        description: "GEDCOM F."
+      intersex:
+        description: "GEDCOM X."
+      unknown:
+        description: "GEDCOM U. Not recorded or cannot be determined."
+
+  FamilyKind:
+    permissible_values:
+      marriage:
+        description: "A religious or civil marriage."
+      civil_union:
+        description: "A registered partnership other than marriage."
+      partnership:
+        description: "An unregistered couple, including parents who never married."
+      unknown:
+        description: "The nature of the union is not known. Use when only shared children prove it."
+
+  Pedigree:
+    description: How a child is linked to a family (GEDCOM PEDI). Stored on the child_of edge.
+    permissible_values:
+      birth:
+        description: "Biological child. The default when a record says nothing else."
+      adopted:
+        description: "Legally adopted."
+      foster:
+        description: "Raised by the family without adoption."
+      step:
+        description: "Child of one partner only, raised in this family."
+      unknown:
+        description: "The link is recorded but its nature is not."
+
+  EventKind:
+    permissible_values:
+      birth:
+        description: "GEDCOM BIRT. About the person born."
+      baptism:
+        description: "GEDCOM BAPM / CHR. Christening or other religious naming; church metric books often give it instead of birth."
+      death:
+        description: "GEDCOM DEAT."
+      burial:
+        description: "GEDCOM BURI. Link the cemetery as the place."
+      engagement:
+        description: "GEDCOM ENGA. About the Family."
+      marriage:
+        description: "GEDCOM MARR. About the Family."
+      divorce:
+        description: "GEDCOM DIV. About the Family."
+      residence:
+        description: "GEDCOM RESI. Where a person or family lived at a time."
+      occupation:
+        description: "GEDCOM OCCU. Put the occupation in the title, e.g. 'Blacksmith'."
+      education:
+        description: "GEDCOM EDUC."
+      military_service:
+        description: "Military service, conscription, award or casualty record."
+      census:
+        description: "GEDCOM CENS. Appearance in a census or household list (e.g. revision lists)."
+      emigration:
+        description: "GEDCOM EMIG. Leaving a place or country."
+      immigration:
+        description: "GEDCOM IMMI. Arriving in a place or country."
+      naturalization:
+        description: "GEDCOM NATU. Acquiring citizenship."
+      deportation:
+        description: "Forced resettlement, exile or deportation."
+      other:
+        description: "Anything else. Describe it in the title."
+
+  EventRole:
+    description: Part a person or family played in an event (GEDCOM ROLE). Stored on the about edge.
+    permissible_values:
+      principal:
+        description: "The event is about them (the child born, the couple married, the deceased)."
+      parent:
+        description: "Parent named in the record, e.g. on a birth or baptism entry."
+      witness:
+        description: "Witness or informant."
+      godparent:
+        description: "Godparent or sponsor at a baptism."
+      officiant:
+        description: "Priest, registrar or official who performed or recorded the event."
+      other:
+        description: "Any other named role."
+
+  PlaceKind:
+    permissible_values:
+      country:
+        description: "Country or empire as it was at the time of the event."
+      region:
+        description: "Province, governorate, state or oblast."
+      district:
+        description: "County, uyezd, raion or similar subdivision."
+      settlement:
+        description: "City, town or village."
+      parish:
+        description: "Church parish or congregation, the unit metric books are kept by."
+      cemetery:
+        description: "Burial ground."
+      address:
+        description: "Street address or farm."
+
+  SourceKind:
+    permissible_values:
+      civil_record:
+        description: "Civil registration: birth, marriage or death certificate or register."
+      church_record:
+        description: "Parish or metric book, confession list, other religious register."
+      census:
+        description: "Census, revision list or household register."
+      military:
+        description: "Service, draft, award or casualty records."
+      migration:
+        description: "Passenger list, passport, visa, naturalization or deportation file."
+      newspaper:
+        description: "Newspaper or periodical."
+      book:
+        description: "Published genealogy, memoir, local history or reference work."
+      oral:
+        description: "Interview or family recollection. Record who said it and when."
+      dna:
+        description: "DNA test match or analysis. Supports relationships only together with documents."
+      online_tree:
+        description: "Someone else's online tree. A lead only, never proof on its own."
+      other:
+        description: "Anything else."
+
+  CitationQuality:
+    description: How much a cited source supports the claim (GEDCOM QUAY). Stored on the cites edge.
+    permissible_values:
+      unreliable:
+        description: "QUAY 0. Unreliable evidence or estimated data."
+      questionable:
+        description: "QUAY 1. Questionable reliability: interviews, census, oral, potentially biased records."
+      secondary:
+        description: "QUAY 2. Secondary evidence, recorded some time after the event."
+      primary:
+        description: "QUAY 3. Direct, primary evidence recorded at the time of the event."
+
+# ---------------------------------------------------------------- SLOTS
+slots:
+  id:
+    identifier: true
+    description: Stable unique id. Never reuse. GEDCOM xref ids (e.g. I123) may be kept here.
+  title:
+    required: true
+    description: >-
+      Display name. A person's name as best known ("Ivan Petrovich Sidorov"), a family's couple
+      ("Sidorov – Ivanova"), an event's short label ("Birth of Ivan Sidorov"), a place's name as
+      recorded at the time, a source's title.
+  summary:
+    description: >-
+      1-3 self-contained sentences: what is known, from which evidence, and what is still open.
+      This is what agents read first when building context.
+  status:
+    range: Status
+    required: true
+  created_at: {range: datetime}
+  updated_at: {range: datetime}
+  notes:
+    description: Research notes, conflicts between sources, transcriptions or translations.
+
+  # Person
+  given_names:
+    description: For Person. Given names, including patronymic where used (GEDCOM GIVN).
+  surname:
+    description: For Person. Surname at birth if known, else as recorded (GEDCOM SURN).
+  other_names:
+    multivalued: true
+    description: >-
+      For Person. Other surnames and spellings: married names, transliterations, church or
+      alternative-language forms, aliases. Searchable, so add every variant found in records.
+  sex: {range: Sex}
+  living:
+    range: boolean
+    description: For Person. True if possibly alive. Do not record contact details or addresses of living people.
+
+  # Event
+  date:
+    range: date
+    description: >-
+      For Event. Best exact date in the Gregorian calendar, when known. For partial or approximate
+      dates leave it empty and use date_text.
+  date_text:
+    description: >-
+      For Event. The date as recorded or as a GEDCOM date phrase: "1890", "ABT 1890",
+      "BET 1890 AND 1895", "BEF 1917", or the original Julian date ("12 MAR 1890 (Julian)").
+  age:
+    description: For Event. Age of the principal as stated in the record, e.g. "45" or "3 months".
+
+  # Place
+  latitude: {range: float}
+  longitude: {range: float}
+  modern_name:
+    description: For Place. Present-day name and country, to find it on modern maps.
+
+  # Source
+  author:
+    description: For Source. Author, creator or issuing authority.
+  repository:
+    description: For Source. Archive or holder with its reference, e.g. "State Archive, fond 123, opis 4, delo 56".
+  uri:
+    description: For Source. Link to the image, catalogue entry or digital copy.
+
+  # ---- edges, direction is source -> target. Targets are set per class in slot_usage.
+  part_of:
+    multivalued: false
+    description: >-
+      Containment. People, families, events, sources and top-level places are part_of their
+      FamilyTree. A place can be part_of a larger place (village part_of district part_of region).
+    annotations: {edge: true}
+  child_of:
+    range: Family
+    multivalued: true
+    description: >-
+      This person is a child of that Family (GEDCOM FAMC). More than one when adopted or fostered;
+      say which with the pedigree edge property.
+    annotations:
+      edge: true
+      edge_properties: "pedigree: Pedigree"
+  partner_in:
+    range: Family
+    multivalued: true
+    description: >-
+      This person is one of the partners of that Family (GEDCOM FAMS). One Family per union, so a
+      person married twice is partner_in two Families.
+    annotations: {edge: true}
+  about:
+    multivalued: true
+    description: >-
+      The people or families an event concerns, each with an optional role
+      (principal, parent, witness, godparent, officiant). Marriage and divorce are about the Family.
+    annotations:
+      edge: true
+      edge_properties: "role: EventRole"
+  occurred_at:
+    range: Place
+    multivalued: false
+    description: Where the event happened (GEDCOM PLAC).
+    annotations: {edge: true}
+  cites:
+    range: Source
+    multivalued: true
+    description: >-
+      Evidence for this record (GEDCOM SOUR citation). Put the exact location in the source in
+      `page` (page, entry or line number) and how strongly it supports the claim in `quality`.
+    annotations:
+      edge: true
+      edge_properties: "page: string, quality: CitationQuality"
+
+# ---------------------------------------------------------------- CLASSES
+classes:
+  Record:
+    abstract: true
+    description: Shared fields only. Inlined into every concrete class.
+    slots: [id, title, summary, status, notes, created_at, updated_at]
+
+  FamilyTree:
+    is_a: Record
+    description: "WHAT: One research tree, e.g. one family line or one client's research. BRANCH: root."
+    annotations:
+      branch: root
+      use_when: >-
+        Starting research. Create it first and describe its scope (which families, places, period)
+        in the summary; every other record belongs to one tree.
+      not_for: A single family or household (use Family).
+
+  Person:
+    is_a: Record
+    description: "WHAT: An individual (GEDCOM INDI). BRANCH: people."
+    annotations:
+      branch: people
+      use_when: >-
+        Any individual named in a record, including witnesses and godparents who may turn out to be
+        relatives. Search for namesakes first and merge only on matching evidence (dates, places, relatives).
+      not_for: Couples or households (Family). Facts with a date or place (record an Event).
+    slots: [given_names, surname, other_names, sex, living, part_of, child_of, partner_in, cites]
+    slot_usage:
+      part_of:
+        range: FamilyTree
+        required: true
+
+  Family:
+    is_a: Record
+    description: "WHAT: A couple and/or the children they raised (GEDCOM FAM). BRANCH: people."
+    annotations:
+      branch: people
+      use_when: >-
+        Linking people: partners join with partner_in, children with child_of. Create it as soon as
+        two parents of one child are known, even if the union itself is undocumented (kind=unknown).
+      not_for: A whole lineage or clan (use FamilyTree).
+    slots: [part_of, cites]
+    slot_usage:
+      part_of:
+        range: FamilyTree
+        required: true
+    attributes:
+      kind: {range: FamilyKind, required: true}
+
+  Event:
+    is_a: Record
+    description: "WHAT: A dated fact in a life: birth, marriage, census entry, migration (GEDCOM events). BRANCH: evidence."
+    annotations:
+      branch: evidence
+      use_when: >-
+        Recording anything that happened at a time or place. Link it to the person or family it is
+        about, the place it happened and the sources that record it.
+      not_for: Timeless traits such as names or sex (Person properties).
+    slots: [date, date_text, age, part_of, about, occurred_at, cites]
+    slot_usage:
+      part_of:
+        range: FamilyTree
+        required: true
+      about:
+        any_of: [{range: Person}, {range: Family}]
+        required: true
+    attributes:
+      kind: {range: EventKind, required: true}
+
+  Place:
+    is_a: Record
+    description: "WHAT: A location as it was named at the time, nested into larger places. BRANCH: geography."
+    annotations:
+      branch: geography
+      use_when: >-
+        An event happened somewhere. Record the name used at the time (borders and names change) and
+        nest it: settlement part_of district part_of region part_of country.
+      not_for: Addresses of living people.
+    slots: [latitude, longitude, modern_name, part_of]
+    slot_usage:
+      part_of:
+        any_of: [{range: Place}, {range: FamilyTree}]
+        required: true
+    attributes:
+      kind: {range: PlaceKind, required: true}
+
+  Source:
+    is_a: Record
+    description: "WHAT: A document, register, interview or dataset that evidence comes from (GEDCOM SOUR). BRANCH: evidence."
+    annotations:
+      branch: evidence
+      use_when: >-
+        Before confirming any claim. Create the source once (a metric book, a census, an interview)
+        and cite it from many records, with the page or entry on the cites edge.
+      not_for: The facts themselves (record them as Events or Person properties and cite this source).
+    slots: [author, repository, uri, part_of]
+    slot_usage:
+      part_of:
+        range: FamilyTree
+        required: true
+    attributes:
+      kind: {range: SourceKind, required: true}

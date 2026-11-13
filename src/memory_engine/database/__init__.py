@@ -43,10 +43,12 @@ def open_driver(settings: Settings, ontology: Ontology, lock_timeout: float = 5.
             raise
         return driver
 
+    from ..config import default_db_path
     from ..core.schema import schema_for
     from .ladybug_driver import LadybugDriver
 
-    driver = LadybugDriver(settings.db_path, ontology.identifier, lock_timeout=lock_timeout)
+    path = settings.db_path or default_db_path(ontology.name)
+    driver = LadybugDriver(path, ontology.identifier, lock_timeout=lock_timeout)
     try:
         driver.ensure_schema(schema_for(ontology))
     except Exception:

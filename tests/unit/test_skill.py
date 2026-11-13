@@ -1,0 +1,181 @@
+"""Skill generation: SKILL.md, references, the pinned `mem` wrapper and install-skill.sh."""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+from click.testing import CliRunner
+from fakes import InMemoryDriver
+
+from memory_engine.cli import main
+from memory_engine.config import default_ontology_path
+from memory_engine.core.engine import OntologyEngine
+from memory_engine.core.errors import MemoryEngineError
+from memory_engine.core.guide import render_markdown
+from memory_engine.core.parser import load_ontology, parse_ontology
+from memory_engine.core.skill import (
+    MARKER,
+    Example,
+    _build,
+    build_skill,
+    example_payloads,
+    render_skill_md,
+    skill_name,
+)
+
+ROOT = Path(__file__).resolve().parents[2]
+BIN = Path(sys.executable).parent  # the venv's memory-engine lives next to its python
+
+RECIPES = {
+    "id": "https://example.org/recipes", "name": "Recipe Book", "title": "Recipes",
+    "slots": {
+        "id": {"identifier": True},
+        "title": {"required": True},
+        "minutes": {"range": "integer"},
+        "uses": {"range": "Ingredient", "multivalued": True, "required": True,
+                 "annotations": {"edge": True, "edge_properties": "amount: string (required)"}},
+    },
+    "classes": {"Ingredient": {"slots": ["id", "title"]}, "Recipe": {"slots": ["id", "title", "minutes", "uses"]}},
+}
+
+
+def frontmatter(text: str) -> dict:
+    _, head, _ = text.split("---\n", 2)
+    return yaml.safe_load(head)
+
+
+def replay(ontology):
+    engine = OntologyEngine(ontology, InMemoryDriver(ontology.identifier))
+    for cls, payload in example_payloads(ontology):
+        engine.remember(cls, payload)
+    return engine
+
+
+def test_skill_name(ontology):
+    assert skill_name(ontology) == "workgraph-memory"
+    assert skill_name(parse_ontology(RECIPES)) == "recipe-book-memory"
+
+
+def test_workgraph_examples_are_valid_writes(ontology):
+    examples = example_payloads(ontology)
+    assert [cls for cls, _ in examples] == ["Project", "Goal", "WorkItem", "Document", "Signal", "Actor"]
+    engine = replay(ontology)
+    assert engine.validate()["valid"]
+
+
+def test_custom_ontology_examples_and_text():
+    ontology = parse_ontology(RECIPES)
+    examples = dict(example_payloads(ontology))
+    assert examples["Recipe"]["uses"] == [{"id": "example-ingredient", "amount": "example"}]
+    assert replay(ontology).validate()["valid"]
+
+    text = render_skill_md(ontology)
+    meta = frontmatter(text)
+    assert meta["name"] == "recipe-book-memory"
+    assert "Ingredient, Recipe" in meta["description"]
+    for workgraph_word in ("WorkItem", "Project", "proposed", "archived", "part_of"):
+        assert workgraph_word not in text
+
+
+def test_rule_required_properties_are_filled(ontology):
+    """A key_result needs `target` only through a rule; the generator must still fill it in."""
+    engine = replay(ontology)
+    made = [Example(c, p.get("level") or p.get("kind"), p) for c, p in example_payloads(ontology)]
+    kr = _build(ontology, ontology.classes["Goal"], "key_result", made)
+    assert kr is not None and "target" in kr.payload
+    engine.remember("Goal", kr.payload)
+
+
+def test_skill_description_override():
+    data = {**RECIPES, "annotations": {"skill_description": "Remember   recipes and what they use."}}
+    assert frontmatter(render_skill_md(parse_ontology(data)))["description"] == "Remember recipes and what they use."
+
+
+def test_workgraph_skill_md(ontology):
+    text = render_skill_md(ontology)
+    meta = frontmatter(text)
+    assert meta["name"] == "workgraph-memory"
+    assert "WorkItem (initiative/epic/task/bug)" in meta["description"]
+    assert "New nodes start as `proposed`" in text
+    assert "--include-archived" in text
+    assert "`part_of` chain up to the root `Project`" in text
+    assert "mem context example-workitem-initiative" in text
+
+
+def test_build_skill(tmp_path):
+    source = default_ontology_path()
+    out = build_skill(source, tmp_path / "skills" / "workgraph-memory")
+    ontology = load_ontology(source)
+    assert (out / "SKILL.md").read_text() == render_skill_md(ontology)
+    assert (out / "references" / "ontology.md").read_text() == render_markdown(ontology)
+    assert (out / "references" / "ontology.yaml").read_bytes() == source.read_bytes()
+    assert os.access(out / "scripts" / "mem", os.X_OK)
+    assert json.loads((out / MARKER).read_text())["ontology"] == "workgraph"
+
+    (out / "stale.txt").write_text("x")
+    build_skill(source, out)  # rebuild replaces the generated dir
+    assert not (out / "stale.txt").exists()
+    assert [p.name for p in out.parent.iterdir()] == ["workgraph-memory"]  # no temp dirs left
+
+
+def test_build_refuses_foreign_directory(tmp_path):
+    foreign = tmp_path / "mine"
+    foreign.mkdir()
+    (foreign / "notes.md").write_text("keep me")
+    with pytest.raises(MemoryEngineError, match="not generated by memory-engine"):
+        build_skill(default_ontology_path(), foreign)
+    assert (foreign / "notes.md").read_text() == "keep me"
+
+
+def test_cli_skill_build(tmp_path):
+    result = CliRunner().invoke(main, ["skill", "build", "workgraph"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["skill"] == "workgraph-memory"
+    assert Path(payload["path"]) == tmp_path / "data" / "skills" / "workgraph-memory"
+    assert (Path(payload["path"]) / "SKILL.md").exists()
+
+
+def _env(tmp_path, **extra):
+    return {**os.environ, "PATH": f"{BIN}{os.pathsep}{os.environ['PATH']}",
+            "MEMORY_DATA_DIR": str(tmp_path / "data"), **extra}
+
+
+def test_wrapper_pins_its_ontology(tmp_path):
+    ontology_file = tmp_path / "recipes.yaml"
+    ontology_file.write_text(yaml.safe_dump(RECIPES))
+    out = build_skill(ontology_file, tmp_path / "recipe-book-memory")
+    result = subprocess.run(
+        [str(out / "scripts" / "mem"), "describe", "--format", "json"],
+        env=_env(tmp_path, MEMORY_ONTOLOGY=str(default_ontology_path())),  # a global value must not leak in
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["ontology"] == "Recipe Book"
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
+def test_install_script(tmp_path):
+    ontology_file = tmp_path / "recipes.yaml"
+    ontology_file.write_text(yaml.safe_dump(RECIPES))
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "graph-memory").symlink_to(tmp_path / "gone")  # stale link from the old layout
+    result = subprocess.run(
+        ["sh", str(ROOT / "scripts" / "install-skill.sh"), str(ontology_file), str(agents)],
+        env=_env(tmp_path), capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    link = agents / "recipe-book-memory"
+    assert link.is_symlink() and link.resolve() == (tmp_path / "data" / "skills" / "recipe-book-memory").resolve()
+    assert (link / "SKILL.md").exists()
+    assert not (agents / "graph-memory").is_symlink()
+
+    bad = subprocess.run(["sh", str(ROOT / "scripts" / "install-skill.sh"), "nope", str(agents)],
+                         env=_env(tmp_path), capture_output=True, text=True, timeout=120)
+    assert bad.returncode == 1 and "workgraph" in bad.stderr and "bundled:" in bad.stderr

@@ -9,6 +9,8 @@ discriminator attribute (e.g. WorkItem.kind):
   allowed_parent: "Class" or "Class:value", comma separated — restricts the
                   containment edge (`part_of`) for nodes with that value.
   requires:       comma-separated edge slots that must be present.
+On the schema:
+  skill_description: overrides the generated skill's frontmatter description.
 On slots:
   edge: true                       the slot is a relationship.
   edge_properties: "role: Role (required)"   typed properties carried on the edge.
@@ -46,7 +48,7 @@ TYPE_KINDS = {
 _SCHEMA_KEYS = {
     "id", "name", "title", "description", "version", "license", "prefixes",
     "default_prefix", "default_range", "imports", "enums", "slots", "classes",
-    "comments", "see_also",
+    "comments", "see_also", "annotations",
 }
 _SLOT_KEYS = {
     "description", "title", "identifier", "required", "range", "multivalued",
@@ -160,6 +162,7 @@ class Ontology:
     root: str | None
     identifier: str = "id"
     source: Path | None = None
+    annotations: dict[str, Any] = field(default_factory=dict)
 
     def concrete_classes(self) -> list[ClassDef]:
         return [c for c in self.classes.values() if not c.abstract]
@@ -309,6 +312,7 @@ def parse_ontology(data: Any, source: Path | None = None) -> Ontology:
         containment=containment,
         root=root,
         source=source,
+        annotations=_annotations("schema", data.get("annotations")),
     )
     ontology.identifier = _validate(ontology)
     return ontology
@@ -621,7 +625,7 @@ def _validate(ont: Ontology) -> str:
     return identifiers.pop()
 
 
-def _static_requirements(ont: Ontology, cls_name: str, value: str | None) -> list[str]:
+def static_requirements(ont: Ontology, cls_name: str, value: str | None) -> list[str]:
     """Edge slots a node of this class/value must always have."""
     cls = ont.classes[cls_name]
     required = ont.required_edges(cls_name, value)
@@ -659,7 +663,7 @@ def _grounding_errors(ont: Ontology) -> list[str]:
         for state in states:
             if state in grounded:
                 continue
-            if all(satisfiable(*state, slot) for slot in _static_requirements(ont, *state)):
+            if all(satisfiable(*state, slot) for slot in static_requirements(ont, *state)):
                 grounded.add(state)
                 changed = True
 
@@ -667,7 +671,7 @@ def _grounding_errors(ont: Ontology) -> list[str]:
     for cls_name, value in states:
         if (cls_name, value) not in grounded:
             label = f"{cls_name}:{value}" if value else cls_name
-            required = ", ".join(_static_requirements(ont, cls_name, value))
+            required = ", ".join(static_requirements(ont, cls_name, value))
             errors.append(
                 f"`{label}` can never be created: its required edges ({required}) only lead "
                 "to classes that cannot be created either (circular requirement)"

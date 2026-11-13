@@ -13,9 +13,10 @@ from memory_engine.core.parser import Ontology, load_ontology
 
 @pytest.fixture(autouse=True)
 def _isolated_database(tmp_path, monkeypatch):
-    """Never touch the user's real memory: default the Ladybug file to a per-test temp path."""
-    monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "memory.lbdb"))
-    monkeypatch.delenv("MEMORY_BACKEND", raising=False)
+    """Never touch the user's real memory or skills: the data dir is a per-test temp dir."""
+    monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path / "data"))
+    for var in ("MEMORY_DB_PATH", "MEMORY_BACKEND", "MEMORY_ONTOLOGY"):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture(scope="session")

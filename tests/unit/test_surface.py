@@ -8,17 +8,8 @@ from fakes import InMemoryDriver
 
 from memory_engine.cli import main
 from memory_engine.core.engine import OntologyEngine
-from memory_engine.core.guide import describe_json, render_markdown
+from memory_engine.core.guide import describe_json
 from memory_engine.tools import TOOLS, handle_agent_call
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_skill_reference_is_up_to_date(ontology):
-    committed = (ROOT / "skills/graph-memory/references/ontology.md").read_text()
-    assert committed == render_markdown(ontology), (
-        "Regenerate with: uv run memory-engine describe > skills/graph-memory/references/ontology.md"
-    )
 
 
 def test_describe_json(ontology):
@@ -75,6 +66,20 @@ def test_cli_ladybug_round_trip(tmp_path):
     assert Path(db).exists()
 
 
+def test_cli_default_db_is_per_ontology(tmp_path):
+    result = CliRunner().invoke(main, ["--ontology", "workgraph", "remember", "Project", "-p", "id=p",
+                                       "-p", "title=P", "-p", "summary=s"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "data" / "workgraph.lbdb").exists()
+
+
+def test_cli_unknown_ontology_name():
+    result = CliRunner().invoke(main, ["--ontology", "nope", "validate"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"] == "ontology_error" and "bundled:" in payload["message"] and "workgraph" in payload["message"]
+
+
 def test_cli_unknown_backend(monkeypatch):
     monkeypatch.setenv("MEMORY_BACKEND", "sqlite")
     result = CliRunner().invoke(main, ["validate"])
@@ -84,3 +89,11 @@ def test_cli_unknown_backend(monkeypatch):
 def test_cli_tools_lists_registry():
     payload = json.loads(CliRunner().invoke(main, ["tools"]).output)
     assert [t["name"] for t in payload["tools"]] == list(TOOLS)
+
+
+def test_cli_db_path(tmp_path, monkeypatch):
+    payload = json.loads(CliRunner().invoke(main, ["--ontology", "family_tree", "db-path"]).output)
+    assert payload["path"] == str(tmp_path / "data" / "family-tree.lbdb")
+    assert payload["exists"] is False and payload["ladybug_version"]
+    monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "x.lbdb"))
+    assert json.loads(CliRunner().invoke(main, ["db-path"]).output)["path"] == str(tmp_path / "x.lbdb")

@@ -4,8 +4,32 @@ from __future__ import annotations
 
 from typing import Any
 
-from .engine import DEFAULT_STATUS, STATUS_SLOT, SYSTEM_PROPERTIES
+from .casting import CastError, cast_slot
+from .engine import ARCHIVED_STATUS, DEFAULT_STATUS, STATUS_SLOT, SYSTEM_PROPERTIES
 from .parser import ClassDef, Ontology, Slot, split_list
+
+
+def _status_accepts(ont: Ontology, value: str) -> bool:
+    """Some concrete class has a `status` slot that accepts `value`."""
+    for cls in ont.concrete_classes():
+        slot = cls.slots.get(STATUS_SLOT)
+        if slot is None or slot.is_edge:
+            continue
+        try:
+            cast_slot(slot, value, ont.enums)
+            return True
+        except CastError:
+            continue
+    return False
+
+
+def default_status(ont: Ontology) -> str | None:
+    """The status the engine gives new nodes, if this ontology has one."""
+    return DEFAULT_STATUS if _status_accepts(ont, DEFAULT_STATUS) else None
+
+
+def supports_archiving(ont: Ontology) -> bool:
+    return _status_accepts(ont, ARCHIVED_STATUS)
 
 
 def _cell(text: Any) -> str:
@@ -29,7 +53,7 @@ def _class_markdown(ont: Ontology, cls: ClassDef) -> list[str]:
         if slot.name in SYSTEM_PROPERTIES:
             continue
         required = "auto if omitted" if slot.identifier else ("yes" if slot.required else "")
-        if slot.name == STATUS_SLOT and slot.required:
+        if slot.name == STATUS_SLOT and slot.required and default_status(ont):
             required = f"defaults to `{DEFAULT_STATUS}`"
         multi = " (list)" if slot.multivalued else ""
         lines.append(f"| `{slot.name}` | {_range(ont, slot)}{multi} | {required} | {_cell(slot.description)} |")
@@ -89,7 +113,10 @@ def render_markdown(ont: Ontology, class_name: str | None = None) -> str:
             "An edge slot given in the payload replaces that slot's edges; omitted edge slots are kept.",
             "- Edge values are a target id, a list of ids, or `{\"id\": ..., <edge props>}` objects.",
             "- Unknown slots, wrong enum values and broken rules are rejected with the reason.",
-            "- New nodes get `status: proposed` unless you set it. Set `null` to clear an optional property.",
+            (
+                f"- New nodes get `{STATUS_SLOT}: {default_status(ont)}` unless you set it. "
+                if default_status(ont) else "- "
+            ) + "Set `null` to clear an optional property.",
             f"- Engine-managed: {', '.join(f'`{p}`' for p in sorted(SYSTEM_PROPERTIES))}.",
         ]
         if ont.root:

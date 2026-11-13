@@ -9,15 +9,17 @@ import json
 import logging
 import sys
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 import click
 
-from .config import BACKENDS, Settings
+from .config import BACKENDS, Settings, data_dir, default_db_path, resolve_ontology
 from .core.engine import OntologyEngine
 from .core.errors import DatabaseError, MemoryEngineError
 from .core.guide import describe_json, render_markdown
 from .core.parser import Ontology, load_ontology
+from .core.skill import build_skill, skill_name
 from .database import GraphDriver, open_driver
 from .tools import TOOLS, error_envelope
 
@@ -121,14 +123,13 @@ def _run(rt: Runtime, tool: str, args: dict[str, Any]) -> dict[str, Any]:
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--ontology",
-    type=click.Path(exists=True, dir_okay=False),
-    help="LinkML ontology file (default: $MEMORY_ONTOLOGY or the bundled workgraph ontology).",
+    help="LinkML ontology file or bundled ontology name (default: $MEMORY_ONTOLOGY or `workgraph`).",
 )
 @click.option(
     "--db",
     "db_path",
     type=click.Path(dir_okay=False),
-    help="Ladybug database file (default: $MEMORY_DB_PATH or memory.lbdb in the user data dir).",
+    help="Ladybug database file (default: $MEMORY_DB_PATH, else <data dir>/<ontology name>.lbdb).",
 )
 @click.option(
     "--backend",
@@ -144,6 +145,9 @@ def main(ctx: click.Context, ontology: str | None, db_path: str | None, backend:
         rt = Runtime(ontology, db_path, backend)
     except ValueError as exc:  # e.g. an unknown MEMORY_BACKEND
         raise click.UsageError(str(exc)) from None
+    except MemoryEngineError as exc:  # e.g. an unknown ontology name
+        click.echo(json.dumps(error_envelope(exc.code, exc.message, exc.issues), indent=2))
+        ctx.exit(1)
     ctx.obj = rt
     ctx.call_on_close(rt.close)
 
@@ -256,6 +260,44 @@ def validate(rt: Runtime) -> dict[str, Any]:
 def call(rt: Runtime, tool: str, arguments: str | None) -> dict[str, Any]:
     """Invoke a tool by name with a JSON ARGUMENTS object (or - for stdin)."""
     return _run(rt, tool, _parse_json(arguments))
+
+
+@main.command("db-path")
+@_command
+def db_path_cmd(rt: Runtime) -> dict[str, Any]:
+    """Show the database file this ontology uses (and the Ladybug version), without opening it."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    path = rt.settings.db_path or str(default_db_path(rt.ontology.name))
+    try:
+        ladybug_version = version("ladybug")
+    except PackageNotFoundError:
+        ladybug_version = None
+    return {
+        "ontology": rt.ontology.name,
+        "backend": rt.settings.backend,
+        "path": path,
+        "exists": path != ":memory:" and Path(path).exists(),
+        "ladybug_version": ladybug_version,
+    }
+
+
+@main.group()
+def skill() -> None:
+    """Generate Agent Skills from ontologies."""
+
+
+@skill.command("build")
+@click.argument("ontology_ref", metavar="ONTOLOGY")
+@click.option("--out", type=click.Path(file_okay=False), help="Skill directory (default: <data dir>/skills/<name>-memory).")
+@_command
+def skill_build(rt: Runtime, ontology_ref: str, out: str | None) -> dict[str, Any]:
+    """Generate the skill (SKILL.md, references, scripts/mem) for ONTOLOGY, a file or bundled name."""
+    source = resolve_ontology(ontology_ref)
+    ontology = load_ontology(source)
+    name = skill_name(ontology)
+    path = build_skill(source, Path(out) if out else data_dir() / "skills" / name)
+    return {"skill": name, "path": str(path), "ontology": ontology.name, "source": str(source.resolve())}
 
 
 @main.command()

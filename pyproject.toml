@@ -32,7 +32,7 @@ build-backend = "hatchling.build"
 packages = ["src/memory_engine"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"ontology" = "memory_engine/ontology"
+"ontologies" = "memory_engine/ontologies"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
