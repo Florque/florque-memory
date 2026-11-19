@@ -150,3 +150,16 @@ def test_find_nodes(db):
     assert len(ids(drv.find_nodes(labels=["Goal", "WorkItem", "Project"], filters={"status": "active"}), p)) == 3
     if not p:  # limit is only exact on a database holding just this test's nodes
         assert ids(drv.find_nodes(limit=2), p) == [f"{p}task", f"{p}kr"]
+
+
+def test_identity_stamp_round_trip(db):
+    db, _ = db
+    name = f"stamp-{uuid.uuid4().hex[:8]}"  # unique: a shared Neo4j database keeps stamps across runs
+    assert db.read_meta(name) is None
+    stamp = {"schema": 1, "kind": "project", "name": name, "work": "workgraph",
+             "domain": "architecture", "domain_prefix": "dom"}
+    db.write_meta(name, stamp)
+    assert db.read_meta(name) == stamp
+    stamp["domain_prefix"] = "area"
+    db.write_meta(name, stamp)
+    assert db.read_meta(name)["domain_prefix"] == "area"

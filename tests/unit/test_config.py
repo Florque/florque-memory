@@ -57,3 +57,34 @@ def test_backend_default_and_override(monkeypatch):
     monkeypatch.setenv("MEMORY_BACKEND", "sqlite")
     with pytest.raises(ValueError, match="Unknown MEMORY_BACKEND"):
         Settings.from_env()
+
+
+def test_manifest_resolves_relative_files_and_defaults_work(tmp_path):
+    from memory_engine.config import DEFAULT_WORK_ONTOLOGY, load_manifest, resolve_ontology
+
+    domain = tmp_path / "domain.yaml"
+    domain.write_text("id: https://x/d\nname: d\n", encoding="utf-8")
+    manifest = tmp_path / "project.yaml"
+    manifest.write_text("name: payments\ndomain: domain.yaml\n", encoding="utf-8")
+
+    loaded = load_manifest(manifest)
+    assert loaded.name == "payments"
+    assert loaded.domain == domain.resolve()
+    assert loaded.work == resolve_ontology(DEFAULT_WORK_ONTOLOGY)
+
+
+def test_manifest_rejects_unknown_keys_and_same_ontology(tmp_path):
+    import pytest
+
+    from memory_engine.config import load_manifest
+    from memory_engine.core.errors import OntologyError
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("name: p\ndomain: workgraph\nextra: 1\n", encoding="utf-8")
+    with pytest.raises(OntologyError, match="unknown keys"):
+        load_manifest(bad)
+
+    same = tmp_path / "same.yaml"
+    same.write_text("name: p\ndomain: workgraph\nwork: workgraph\n", encoding="utf-8")
+    with pytest.raises(OntologyError, match="must be different"):
+        load_manifest(same)

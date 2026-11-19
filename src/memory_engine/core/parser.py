@@ -62,6 +62,9 @@ _CLASS_KEYS = {
 _ENUM_KEYS = {"description", "title", "permissible_values", "annotations", "comments"}
 _VALUE_KEYS = {"description", "title", "annotations", "meaning", "comments"}
 _RULE_KEYS = {"description", "preconditions", "postconditions"}
+# Closed vocabulary connecting a work ontology to a domain ontology (see core/project.py).
+# Domain classes declare roles with `bridge_role`; work edges declare `target_role`.
+BRIDGE_ROLES = ("system", "component", "finding", "decision", "data")
 _EDGE_PROP = re.compile(r"^\s*(\w+)\s*:\s*(\w+)\s*(\(required\))?\s*$")
 
 
@@ -147,8 +150,14 @@ class ClassDef:
         return [s for s in self.slots.values() if not s.is_edge]
 
     @property
+    def bridges(self) -> list[Slot]:
+        """Bridge edges declared with a target_role, whether or not a project has resolved them."""
+        return [s for s in self.slots.values() if s.is_edge and "target_role" in s.annotations]
+
+    @property
     def edges(self) -> list[Slot]:
-        return [s for s in self.slots.values() if s.is_edge]
+        # A bridge edge with no resolved targets (no project merged in) does not exist yet.
+        return [s for s in self.slots.values() if s.is_edge and s.ranges]
 
 
 @dataclass
@@ -168,11 +177,23 @@ class Ontology:
         return [c for c in self.classes.values() if not c.abstract]
 
     def get_class(self, name: str, *, concrete: bool = True) -> ClassDef:
-        """Case-insensitive lookup for user/agent input."""
+        """Case-insensitive lookup for user/agent input.
+
+        In a project, domain classes are stored as `<prefix>_<Name>`. A bare name (`Component`) also
+        resolves to its prefixed class when that is the only match. An exact match always wins.
+        """
         candidates = [c for c in self.classes.values() if not (concrete and c.abstract)]
+        wanted = str(name).strip().lower()
         for cls in candidates:
-            if cls.name.lower() == str(name).strip().lower():
+            if cls.name.lower() == wanted:
                 return cls
+        prefix = (self.annotations.get("modules") or {}).get("domain_prefix")
+        if prefix:
+            tail = f"{prefix}_".lower()
+            prefixed = [c for c in candidates if c.name.lower().startswith(tail)
+                        and c.name.lower()[len(tail):] == wanted]
+            if len(prefixed) == 1:
+                return prefixed[0]
         known = ", ".join(sorted(c.name for c in candidates))
         raise ValidationError(f"Unknown class `{name}`. Known classes: {known}")
 
@@ -561,6 +582,15 @@ def _validate(ont: Ontology) -> str:
                         f"{where} slot `{slot.name}` ranges over class `{rng}` "
                         "but is not annotated `edge: true`"
                     )
+            if slot.is_edge and "target_role" in slot.annotations:
+                role = str(slot.annotations["target_role"])
+                if role not in BRIDGE_ROLES:
+                    errors.append(f"{where} edge `{slot.name}` has unknown target_role `{role}`")
+                if slot.required:
+                    errors.append(f"{where} edge `{slot.name}` is a bridge and must be optional")
+                if slot.ranges:
+                    errors.append(f"{where} edge `{slot.name}` cannot have both a range and a target_role")
+                continue
             if slot.is_edge and not slot.ranges and not cls.abstract:
                 errors.append(
                     f"{where} edge `{slot.name}` has no target class; set range or any_of in slot_usage"
@@ -572,6 +602,10 @@ def _validate(ont: Ontology) -> str:
                     errors.append(
                         f"{where} edge `{slot.name}` property `{prop.name}` has invalid range `{prop.range}`"
                     )
+        for role in split_list(cls.annotations.get("bridge_role")):
+            if role not in BRIDGE_ROLES:
+                errors.append(f"{where} has unknown bridge_role `{role}`")
+
         if cls.abstract:
             continue
 

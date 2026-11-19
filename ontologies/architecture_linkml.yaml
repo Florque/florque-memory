@@ -1,0 +1,288 @@
+id: https://example.org/ontology/architecture
+name: architecture
+title: Minimal Architecture Ontology
+description: >-
+  Domain-agnostic module describing a software system's architecture for
+  end-to-end healthchecks and scaling/improvement planning. Not a code-level model.
+license: MIT
+prefixes:
+  linkml: https://w3id.org/linkml/
+  arch: https://example.org/ontology/architecture/
+default_prefix: arch
+default_range: string
+imports:
+  - linkml:types
+
+# ---------------------------------------------------------------- slots
+slots:
+  id:
+    identifier: true
+  name:
+    required: true
+  description:
+  tags:
+    multivalued: true
+  owner:
+    description: Reference to a team/person node in the org graph (external id).
+  evidence:
+    description: Links or refs backing the claim (dashboards, ADRs, diagrams, commits).
+    multivalued: true
+
+# ---------------------------------------------------------------- classes
+classes:
+  NamedThing:
+    abstract: true
+    slots: [id, name, description, tags, owner]
+
+  # ---- structure -------------------------------------------------
+  System:
+    annotations: {bridge_role: system}
+    description: Top-level scope of a healthcheck (a product, platform or bounded context).
+    is_a: NamedThing
+    attributes:
+      components:
+        range: Component
+        annotations: {edge: true}
+        multivalued: true
+      business_goals:
+        description: What the system must achieve; anchors every quality objective.
+        multivalued: true
+
+  Component:
+    annotations: {bridge_role: component}
+    description: Any deployable or logically distinct building block, nestable via part_of.
+    is_a: NamedThing
+    attributes:
+      kind:
+        range: ComponentKind
+        required: true
+      part_of:
+        range: Component
+        annotations: {edge: true}
+        description: Parent component or boundary (module, domain, cluster).
+      technology:
+        description: Main stack, runtime or product (e.g. Postgres 16, Kafka, Next.js).
+      criticality:
+        range: Criticality
+      stateless:
+        range: boolean
+      scaling_model:
+        range: ScalingModel
+      redundancy:
+        description: Replication/failover setup (e.g. "3 replicas multi-AZ", "none").
+      environments:
+        multivalued: true
+      lifecycle:
+        range: Lifecycle
+      owns_data:
+        range: DataEntity
+        annotations: {edge: true}
+        multivalued: true
+
+  Interaction:
+    description: Directed dependency edge between two components; the basis for coupling, blast radius and SPOF analysis.
+    is_a: NamedThing
+    attributes:
+      source:
+        range: Component
+        annotations: {edge: true}
+        required: true
+      target:
+        range: Component
+        annotations: {edge: true}
+        required: true
+      protocol:
+        description: HTTP/REST, gRPC, AMQP, SQL, file drop, ...
+      mode:
+        range: InteractionMode
+      contract:
+        description: Schema/API spec reference (OpenAPI, protobuf, event schema).
+      criticality:
+        range: Criticality
+      failure_behavior:
+        description: What happens to source when target is slow/down (timeout, retry, fallback, cascade).
+
+  DataEntity:
+    annotations: {bridge_role: data}
+    description: A significant data set or store content, owned by one component.
+    is_a: NamedThing
+    attributes:
+      sensitivity:
+        range: Sensitivity
+      growth:
+        description: Volume and growth rate (free text or number+unit).
+      consistency:
+        description: Required consistency/retention/recovery needs.
+
+  Flow:
+    description: A critical end-to-end user or business journey across components.
+    is_a: NamedThing
+    attributes:
+      steps:
+        range: Interaction
+        annotations: {edge: true}
+        multivalued: true
+        description: Ordered interactions the flow traverses.
+      criticality:
+        range: Criticality
+
+  # ---- health ----------------------------------------------------
+  QualityObjective:
+    description: Target for a quality attribute (SLO, capacity goal, cost cap) with the current measured value.
+    is_a: NamedThing
+    attributes:
+      attribute:
+        range: QualityAttribute
+        required: true
+      applies_to:
+        range: NamedThing
+        annotations: {edge: true}
+        multivalued: true
+        description: Components, flows or the whole system.
+      target:
+      current:
+      unit:
+      measured_at:
+        range: date
+
+  Decision:
+    annotations: {bridge_role: decision}
+    description: Architectural decision (ADR-style) including constraints that shape the design.
+    is_a: NamedThing
+    attributes:
+      status:
+        range: DecisionStatus
+      rationale:
+      alternatives_considered:
+        multivalued: true
+      affects:
+        range: NamedThing
+        annotations: {edge: true}
+        multivalued: true
+
+  Finding:
+    annotations: {bridge_role: finding}
+    description: Healthcheck result - a risk, weakness or limit discovered in the architecture.
+    is_a: NamedThing
+    slots: [evidence]
+    attributes:
+      category:
+        range: FindingCategory
+        required: true
+      severity:
+        range: Severity
+        required: true
+      affects:
+        range: NamedThing
+        multivalued: true
+        required: true
+        annotations: {edge: true}
+      violates:
+        range: QualityObjective
+        annotations: {edge: true}
+        multivalued: true
+      status:
+        range: FindingStatus
+
+  Improvement:
+    description: Planned change that resolves findings; hands off to the work graph as epics/tickets.
+    is_a: NamedThing
+    attributes:
+      addresses:
+        range: Finding
+        annotations: {edge: true}
+        multivalued: true
+        required: true
+      change_type:
+        range: ChangeType
+      impact:
+        range: Level
+      effort:
+        range: Level
+      depends_on:
+        range: Improvement
+        annotations: {edge: true}
+        multivalued: true
+      work_ref:
+        description: External id of the epic/ticket in the work graph.
+      status:
+        range: ImprovementStatus
+
+# ---------------------------------------------------------------- enums
+enums:
+  ComponentKind:
+    permissible_values:
+      service:
+      frontend:
+      datastore:
+      queue_or_stream:
+      batch_job:
+      library:
+      gateway:
+      infrastructure:
+      external_system:
+      boundary:
+  InteractionMode:
+    permissible_values:
+      sync_request:
+      async_message:
+      event_stream:
+      batch_transfer:
+      shared_storage:
+  Criticality:
+    permissible_values: {low: , medium: , high: , critical: }
+  Sensitivity:
+    permissible_values: {public: , internal: , confidential: , regulated: }
+  Level:
+    permissible_values: {low: , medium: , high: }
+  ScalingModel:
+    permissible_values:
+      horizontal:
+      vertical:
+      none:
+      unknown:
+  Lifecycle:
+    permissible_values: {planned: , active: , deprecated: , retired: }
+  QualityAttribute:
+    permissible_values:
+      availability:
+      latency:
+      throughput:
+      scalability:
+      resilience:
+      security:
+      cost:
+      maintainability:
+      observability:
+      data_integrity:
+  DecisionStatus:
+    permissible_values: {proposed: , accepted: , superseded: , rejected: }
+  Severity:
+    permissible_values: {info: , low: , medium: , high: , critical: }
+  FindingCategory:
+    permissible_values:
+      single_point_of_failure:
+      bottleneck:
+      scalability_limit:
+      tight_coupling:
+      cascading_failure_risk:
+      data_ownership_conflict:
+      missing_observability:
+      security_gap:
+      cost_inefficiency:
+      tech_obsolescence:
+      undocumented_area:
+  FindingStatus:
+    permissible_values: {open: , accepted_risk: , planned: , resolved: }
+  ChangeType:
+    permissible_values:
+      refactor:
+      replace:
+      split:
+      merge:
+      add_capacity:
+      add_redundancy:
+      add_observability:
+      remove:
+  ImprovementStatus:
+    permissible_values: {proposed: , planned: , in_progress: , done: , dropped: }

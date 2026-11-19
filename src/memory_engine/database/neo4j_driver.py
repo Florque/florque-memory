@@ -11,6 +11,7 @@ Install with the `neo4j` extra: `pip install 'memory-engine[neo4j]'`.
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, TypeVar
 
@@ -18,7 +19,7 @@ from neo4j import GraphDatabase
 from neo4j.exceptions import AuthError, DriverError, Neo4jError, ServiceUnavailable
 
 from ..core.errors import DatabaseError, DatabaseUnavailableError, NotFoundError
-from .base import Edge, EdgeTargets, GraphSchema, Node
+from .base import META_ID, META_TABLE, Edge, EdgeTargets, GraphSchema, Node
 from .base import ident as _ident
 
 BASE_LABEL = "Node"
@@ -248,3 +249,24 @@ class Neo4jDynamicDriver:
 
         with self._session() as session:
             return session.execute_write(work) > 0
+
+    # ---------------------------------------------------------------- identity stamp
+
+    @_translated
+    def read_meta(self, name: str) -> dict[str, Any] | None:
+        rows = self._read(
+            f"MATCH (m:{_ident(META_TABLE)} {{id: $id}}) RETURN m.value AS value", id=f"{META_ID}:{name}"
+        )
+        return json.loads(rows[0]["value"]) if rows else None
+
+    @_translated
+    def write_meta(self, name: str, value: Mapping[str, Any]) -> None:
+        def work(tx: Any) -> None:
+            tx.run(
+                f"MERGE (m:{_ident(META_TABLE)} {{id: $id}}) SET m.value = $value",
+                id=f"{META_ID}:{name}",
+                value=json.dumps(dict(value), sort_keys=True),
+            )
+
+        with self._session() as session:
+            session.execute_write(work)

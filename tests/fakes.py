@@ -16,6 +16,13 @@ class InMemoryDriver:
         self.nodes: dict[str, Node] = {}
         self.rels: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.schema: list[str] | None = None
+        self.meta: dict[str, dict[str, Any]] = {}
+
+    def read_meta(self, name: str) -> dict[str, Any] | None:
+        return dict(self.meta[name]) if name in self.meta else None
+
+    def write_meta(self, name: str, value: Mapping[str, Any]) -> None:
+        self.meta[name] = dict(value)
 
     def close(self) -> None:
         pass

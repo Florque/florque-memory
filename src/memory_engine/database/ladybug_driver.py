@@ -14,6 +14,7 @@ retried for `lock_timeout` seconds, then fails with DatabaseBusyError.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Iterable, Iterator, Mapping
@@ -31,7 +32,7 @@ from ..core.errors import (
     NotFoundError,
     ValidationError,
 )
-from .base import Column, Edge, EdgeTargets, GraphSchema, Node, ident
+from .base import META_ID, META_TABLE, Column, Edge, EdgeTargets, GraphSchema, Node, ident
 
 MEMORY = ":memory:"
 
@@ -163,7 +164,11 @@ class LadybugDriver:
 
     def _load_catalog(self) -> None:
         self._columns, self._rels, self._rel_columns = {}, {}, {}
+        self._has_meta = False
         for name, kind in self._rows("CALL show_tables() RETURN name, type"):
+            if name == META_TABLE:  # the identity stamp is not part of the graph
+                self._has_meta = True
+                continue
             info = {
                 str(col): _norm_type(str(typ))
                 for col, typ in self._rows(f"CALL table_info('{name}') RETURN name, type")
@@ -175,6 +180,23 @@ class LadybugDriver:
                 self._rels[name] = {
                     (str(row[0]), str(row[1])) for row in self._rows(f"CALL show_connection('{name}') RETURN *")
                 }
+
+    def read_meta(self, name: str) -> dict[str, Any] | None:
+        # one database file holds one ontology or project, so the stamp is not keyed by `name`
+        if not self._has_meta:
+            return None
+        rows = self._rows(f"MATCH (m:{ident(META_TABLE)}) WHERE m.id = $id RETURN m.value", {"id": META_ID})
+        return json.loads(rows[0][0]) if rows else None
+
+    def write_meta(self, name: str, value: Mapping[str, Any]) -> None:
+        if not self._has_meta:
+            self._rows(f"CREATE NODE TABLE IF NOT EXISTS {ident(META_TABLE)}(id STRING PRIMARY KEY, value STRING)")
+            self._has_meta = True
+        with self._transaction():
+            self._rows(
+                f"MERGE (m:{ident(META_TABLE)} {{id: $id}}) SET m.value = $value",
+                {"id": META_ID, "value": json.dumps(dict(value), sort_keys=True)},
+            )
 
     def ensure_schema(self, schema: GraphSchema) -> None:
         if schema.id_key != self.id_key:

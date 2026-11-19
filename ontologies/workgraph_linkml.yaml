@@ -183,6 +183,33 @@ slots:
     description: Accountability. "This Actor answers for it." One owner per node.
     annotations: {edge: true}
 
+  # ---- bridges to a domain ontology (optional; resolved when a project is merged).
+  # The domain classes that play each role are tagged with `bridge_role` in the domain ontology.
+  scope:
+    multivalued: true
+    description: "Bridge. This initiative covers that system."
+    annotations: {edge: true, target_role: system}
+  targets:
+    multivalued: true
+    description: "Bridge. This work changes that component."
+    annotations: {edge: true, target_role: component}
+  addresses:
+    multivalued: true
+    description: "Bridge. This work resolves that finding."
+    annotations: {edge: true, target_role: finding}
+  changes:
+    multivalued: true
+    description: "Bridge. This work changes that data entity or document."
+    annotations: {edge: true, target_role: data}
+  implements:
+    multivalued: true
+    description: "Bridge. This work carries out that decision."
+    annotations: {edge: true, target_role: decision}
+  measures:
+    multivalued: true
+    description: "Bridge. This observation measures that component or system."
+    annotations: {edge: true, target_role: component}
+
 # ---------------------------------------------------------------- CLASSES
 classes:
   Node:
@@ -235,7 +262,7 @@ classes:
         Creating or updating planned work. Start with an initiative that serves a goal;
         add epics only when an initiative needs structure. Default to kind=task.
       not_for: Outcomes or targets (Goal), written requirements (Document).
-    slots: [acceptance_criteria, due, part_of, serves, depends_on]
+    slots: [acceptance_criteria, due, part_of, serves, depends_on, scope, targets, addresses, changes, implements]
     slot_usage:
       part_of:
         any_of: [{range: WorkItem}, {range: Project}]
@@ -279,7 +306,7 @@ classes:
         Capturing something observed rather than planned. Metrics track key results
         (link with about); record the number in value and the origin in source.
       not_for: Plans, requirements, or targets (use Goal).
-    slots: [observed_at, value, source, part_of, about]
+    slots: [observed_at, value, source, part_of, about, measures]
     slot_usage:
       part_of:
         range: Project

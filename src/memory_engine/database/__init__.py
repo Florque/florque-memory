@@ -18,39 +18,56 @@ __all__ = ["Column", "Edge", "GraphDriver", "GraphSchema", "Node", "RelTable", "
 def open_driver(settings: Settings, ontology: Ontology, lock_timeout: float = 5.0) -> GraphDriver:
     """Connect to the configured backend and fail fast if it is unusable.
 
-    Ladybug is embedded, so its tables are created/migrated on open (cheap and idempotent)
-    and no separate `init` step is needed. Neo4j keeps `mem init` for its constraints.
+    The database's identity stamp is checked first: a database created for another ontology or
+    project is refused before any table is created or changed. Ladybug is embedded, so its tables
+    are created/migrated on open (cheap and idempotent) and no separate `init` step is needed.
+    Neo4j keeps `mem init` for its constraints.
     """
-    if settings.backend == "neo4j":
-        try:
-            from .neo4j_driver import Neo4jDynamicDriver
-        except ImportError as exc:
-            raise DatabaseUnavailableError(
-                "The Neo4j backend needs the neo4j client: pip install 'memory-engine[neo4j]'"
-            ) from exc
-        driver = Neo4jDynamicDriver(
-            settings.neo4j_uri,
-            (settings.neo4j_user, settings.neo4j_password),
-            settings.neo4j_database,
-            ontology.identifier,
-            connection_timeout=5,
-            max_transaction_retry_time=5,
-        )
-        try:
-            driver.verify()  # fail fast instead of entering the driver's retry loop
-        except Exception:
-            driver.close()
-            raise
-        return driver
-
-    from ..config import default_db_path
+    from ..core.identity import check_identity, identity_of
     from ..core.schema import schema_for
-    from .ladybug_driver import LadybugDriver
 
-    path = settings.db_path or default_db_path(ontology.name)
-    driver = LadybugDriver(path, ontology.identifier, lock_timeout=lock_timeout)
+    current = identity_of(ontology)
+    if settings.backend == "neo4j":
+        driver = _open_neo4j(settings, ontology)
+        schema = None
+    else:
+        from ..config import default_db_path
+        from .ladybug_driver import LadybugDriver
+
+        path = settings.db_path or default_db_path(ontology.name)
+        driver = LadybugDriver(path, ontology.identifier, lock_timeout=lock_timeout)
+        schema = schema_for(ontology)
     try:
-        driver.ensure_schema(schema_for(ontology))
+        stored = driver.read_meta(ontology.name)
+        if stored is not None:
+            check_identity(stored, current)
+        if schema is not None:
+            driver.ensure_schema(schema)
+        if stored != current:  # first open of this database, or one created before stamps existed
+            driver.write_meta(ontology.name, current)
+    except Exception:
+        driver.close()
+        raise
+    return driver
+
+
+def _open_neo4j(settings: Settings, ontology: Ontology) -> GraphDriver:
+    try:
+        from .neo4j_driver import Neo4jDynamicDriver
+    except ImportError as exc:
+        raise DatabaseUnavailableError(
+            "The Neo4j backend needs the neo4j client: pip install 'memory-engine[neo4j]'"
+        ) from exc
+    driver = Neo4jDynamicDriver(
+        settings.neo4j_uri,
+        (settings.neo4j_user, settings.neo4j_password),
+        settings.neo4j_database,
+        ontology.identifier,
+        connection_timeout=5,
+        max_transaction_retry_time=5,
+    )
+    try:
+        driver.verify()  # fail fast instead of entering the driver's retry loop
     except Exception:
         driver.close()
         raise

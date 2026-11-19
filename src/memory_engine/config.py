@@ -75,6 +75,88 @@ def default_ontology_path() -> Path:
     return resolve_ontology(DEFAULT_ONTOLOGY)
 
 
+DEFAULT_WORK_ONTOLOGY = "workgraph"
+_MANIFEST_KEYS = {"name", "work", "domain", "domain_prefix", "db"}
+DEFAULT_DOMAIN_PREFIX = "dom"
+
+
+@dataclass(frozen=True)
+class ProjectManifest:
+    """An umbrella project: one work ontology plus one domain ontology, stored in one database.
+
+    The manifest only references ontologies; it carries no schema content.
+    """
+
+    name: str
+    work: Path
+    domain: Path
+    domain_prefix: str = DEFAULT_DOMAIN_PREFIX
+    source: Path | None = None
+    db: str | None = None  # absolute database file, or ":memory:"; None = the default data-dir file
+
+
+def load_manifest(path: str | os.PathLike) -> ProjectManifest:
+    """Read a project manifest (`name`, `work`, `domain`). Relative paths resolve against the manifest.
+
+    `work` defaults to the bundled `workgraph` ontology. Both ontologies may be a bundled name or a file.
+    """
+    import yaml  # local import: only project mode needs YAML here
+
+    source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise OntologyError(f"Project manifest `{path}` does not exist")
+    try:
+        data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise OntologyError(f"Project manifest `{source}` is not valid YAML: {exc}") from exc
+    if not isinstance(data, dict):
+        raise OntologyError(f"Project manifest `{source}` must be a mapping")
+
+    unknown = sorted(set(data) - _MANIFEST_KEYS)
+    if unknown:
+        raise OntologyError(f"Project manifest `{source}` has unknown keys: {', '.join(unknown)}")
+
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise OntologyError(f"Project manifest `{source}` needs a non-empty `name`")
+    if not data.get("domain"):
+        raise OntologyError(f"Project manifest `{source}` needs a `domain` ontology")
+
+    def locate(key: str, ref: str) -> Path:
+        if not isinstance(ref, str):
+            raise OntologyError(f"`{key}` in `{source}` must be a bundled name or a file path")
+        candidate = Path(ref).expanduser()
+        if not candidate.is_absolute() and (source.parent / candidate).is_file():
+            return (source.parent / candidate).resolve()
+        return resolve_ontology(ref)
+
+    work = locate("work", data.get("work") or DEFAULT_WORK_ONTOLOGY)
+    domain = locate("domain", data["domain"])
+    if work == domain:
+        raise OntologyError("`work` and `domain` must be different ontologies")
+    prefix = data.get("domain_prefix", DEFAULT_DOMAIN_PREFIX)
+    if not isinstance(prefix, str):
+        raise OntologyError(f"`domain_prefix` in `{source}` must be a string")
+    db = _manifest_db(source, data.get("db"))
+    return ProjectManifest(
+        name=name.strip(), work=work, domain=domain, domain_prefix=prefix, source=source, db=db
+    )
+
+
+def _manifest_db(source: Path, raw: Any) -> str | None:
+    """`db` is resolved against the manifest's folder, so a project can keep its graph next to it."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise OntologyError(f"`db` in `{source}` must be a file path or `:memory:`")
+    if raw.strip() == ":memory:":
+        return ":memory:"
+    candidate = Path(raw.strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = source.parent / candidate
+    return str(candidate.resolve())
+
+
 @dataclass(frozen=True)
 class Settings:
     backend: str
@@ -83,7 +165,8 @@ class Settings:
     neo4j_user: str
     neo4j_password: str
     neo4j_database: str | None
-    ontology_path: Path
+    ontology_path: Path | None  # None in project mode
+    project_path: Path | None  # project manifest; set means work + domain ontologies, merged
     actor: str | None
 
     @classmethod
@@ -92,20 +175,31 @@ class Settings:
         ontology_path: str | os.PathLike | None = None,
         db_path: str | os.PathLike | None = None,
         backend: str | None = None,
+        project: str | os.PathLike | None = None,
     ) -> Settings:
-        """Explicit arguments (CLI options) win over environment variables, which win over defaults."""
+        """Explicit arguments (CLI options) win over environment variables, which win over defaults.
+
+        Database file precedence: --db / MEMORY_DB_PATH, then the manifest's `db`, then the data dir.
+        """
         env = os.environ
         ontology = ontology_path or env.get("MEMORY_ONTOLOGY")
+        project = project or env.get("MEMORY_PROJECT")
+        if project and ontology_path:
+            raise ValueError("Use either --ontology or --project, not both")
+        explicit_db = db_path or env.get("MEMORY_DB_PATH")
+        project_path = Path(project).expanduser().resolve() if project else None
+        manifest_db = load_manifest(project_path).db if project_path and not explicit_db else None
         backend = (backend or env.get("MEMORY_BACKEND") or DEFAULT_BACKEND).strip().lower()
         if backend not in BACKENDS:
             raise ValueError(f"Unknown MEMORY_BACKEND {backend!r}; expected one of {', '.join(BACKENDS)}")
         return cls(
             backend=backend,
-            db_path=str(explicit_db) if (explicit_db := db_path or env.get("MEMORY_DB_PATH")) else None,
+            db_path=str(explicit_db) if explicit_db else manifest_db,
             neo4j_uri=env.get("NEO4J_URI", "bolt://localhost:7687"),
             neo4j_user=env.get("NEO4J_USER", "neo4j"),
             neo4j_password=env.get("NEO4J_PASSWORD", "memory-engine-dev"),
             neo4j_database=env.get("NEO4J_DATABASE") or None,
-            ontology_path=resolve_ontology(ontology) if ontology else default_ontology_path(),
+            ontology_path=None if project else (resolve_ontology(ontology) if ontology else default_ontology_path()),
+            project_path=project_path,
             actor=env.get("MEMORY_ACTOR") or None,
         )

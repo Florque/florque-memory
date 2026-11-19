@@ -23,6 +23,10 @@ def ident(name: str) -> str:
 
 COLUMN_TYPES = ("string", "integer", "float", "boolean", "date", "datetime")
 
+# The database identity stamp: one reserved row, invisible to the engine (see core/identity.py).
+META_TABLE = "_MemoryMeta"
+META_ID = "__meta__"
+
 
 @dataclass(frozen=True)
 class Column:
@@ -116,5 +120,13 @@ class GraphDriver(Protocol):
         ...
 
     def remove_edge(self, src: str, rel: str, dst: str) -> bool: ...
+
+    def read_meta(self, name: str) -> dict[str, Any] | None:
+        """The identity stamp written for ontology/project `name`, or None if there is none."""
+        ...
+
+    def write_meta(self, name: str, value: Mapping[str, Any]) -> None:
+        """Store the identity stamp for `name`. Ladybug keeps one stamp per file; Neo4j one per name."""
+        ...
 
     def close(self) -> None: ...

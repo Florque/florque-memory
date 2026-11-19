@@ -115,3 +115,33 @@ def test_family_tree_rejections(family):
         family.remember("Event", {"title": "Bad", "kind": "death", "part_of": "tree", "about": ["metric-1890"]})
     with pytest.raises(ValidationError, match="containment cycle"):
         family.link("tver", "part_of", "ostashkov")
+
+
+# ------------------------------------------------------------ project scenario
+
+
+def test_project_examples_are_valid_writes_and_skill_builds(tmp_path):
+    """The work + architecture project: its generated examples (work and domain, with bridges)
+    must be accepted on real Ladybug, and its skill must build with the project section."""
+    from memory_engine.core.project import load_project
+    from memory_engine.core.skill import build_project_skill
+
+    manifest = tmp_path / "payments.yaml"
+    manifest.write_text(
+        f"name: payments-platform\nwork: workgraph\ndomain: {bundled_ontologies()['architecture']}\n",
+        encoding="utf-8",
+    )
+    ontology = load_project(manifest)
+    engine = ladybug_engine(ontology)
+    try:
+        examples = example_payloads(ontology)
+        assert {cls for cls, _ in examples} == {c.name for c in ontology.concrete_classes()}
+        for cls, payload in examples:
+            engine.remember(cls, payload)
+        assert engine.validate()["valid"]
+    finally:
+        engine.db.close()
+
+    out = build_project_skill(manifest, tmp_path / skill_name(ontology))
+    text = (out / "SKILL.md").read_text()
+    assert "## Work and domain" in text and "`addresses` from `WorkItem` to `dom_Finding`" in text

@@ -47,6 +47,12 @@ class DatabaseUnavailableError(DatabaseError):
     code = "database_unavailable"
 
 
+class OntologyMismatchError(DatabaseError):
+    """The database was created for a different ontology or project; nothing was written."""
+
+    code = "ontology_mismatch"
+
+
 class DatabaseBusyError(DatabaseUnavailableError):
     """An embedded database file is locked by another process."""
 

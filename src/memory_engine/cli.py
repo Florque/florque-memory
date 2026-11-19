@@ -18,8 +18,10 @@ from .config import BACKENDS, Settings, data_dir, default_db_path, resolve_ontol
 from .core.engine import OntologyEngine
 from .core.errors import DatabaseError, MemoryEngineError
 from .core.guide import describe_json, render_markdown
+from .core.identity import identity_of
 from .core.parser import Ontology, load_ontology
-from .core.skill import build_skill, skill_name
+from .core.project import load_project
+from .core.skill import build_project_skill, build_skill, skill_name
 from .database import GraphDriver, open_driver
 from .tools import TOOLS, error_envelope
 
@@ -27,15 +29,24 @@ from .tools import TOOLS, error_envelope
 class Runtime:
     """Loads the ontology and opens the database only when a command needs them."""
 
-    def __init__(self, ontology_path: str | None, db_path: str | None = None, backend: str | None = None):
-        self.settings = Settings.from_env(ontology_path, db_path=db_path, backend=backend)
+    def __init__(
+        self,
+        ontology_path: str | None,
+        db_path: str | None = None,
+        backend: str | None = None,
+        project: str | None = None,
+    ):
+        self.settings = Settings.from_env(ontology_path, db_path=db_path, backend=backend, project=project)
         self._ontology: Ontology | None = None
         self._driver: GraphDriver | None = None
 
     @property
     def ontology(self) -> Ontology:
         if self._ontology is None:
-            self._ontology = load_ontology(self.settings.ontology_path)
+            if self.settings.project_path is not None:
+                self._ontology = load_project(self.settings.project_path)
+            else:
+                self._ontology = load_ontology(self.settings.ontology_path)
         return self._ontology
 
     @property
@@ -126,6 +137,10 @@ def _run(rt: Runtime, tool: str, args: dict[str, Any]) -> dict[str, Any]:
     help="LinkML ontology file or bundled ontology name (default: $MEMORY_ONTOLOGY or `workgraph`).",
 )
 @click.option(
+    "--project",
+    help="Project manifest (work + domain ontologies in one graph); default: $MEMORY_PROJECT. Excludes --ontology.",
+)
+@click.option(
     "--db",
     "db_path",
     type=click.Path(dir_okay=False),
@@ -138,12 +153,14 @@ def _run(rt: Runtime, tool: str, args: dict[str, Any]) -> dict[str, Any]:
 )
 @click.version_option(package_name="memory-engine")
 @click.pass_context
-def main(ctx: click.Context, ontology: str | None, db_path: str | None, backend: str | None) -> None:
+def main(
+    ctx: click.Context, ontology: str | None, project: str | None, db_path: str | None, backend: str | None
+) -> None:
     """Ontology-governed graph memory for coding agents."""
     logging.getLogger("neo4j").setLevel(logging.ERROR)  # keep stderr clean; errors go in the envelope
     try:
-        rt = Runtime(ontology, db_path, backend)
-    except ValueError as exc:  # e.g. an unknown MEMORY_BACKEND
+        rt = Runtime(ontology, db_path, backend, project)
+    except ValueError as exc:  # e.g. an unknown MEMORY_BACKEND or --ontology with --project
         raise click.UsageError(str(exc)) from None
     except MemoryEngineError as exc:  # e.g. an unknown ontology name
         click.echo(json.dumps(error_envelope(exc.code, exc.message, exc.issues), indent=2))
@@ -279,6 +296,7 @@ def db_path_cmd(rt: Runtime) -> dict[str, Any]:
         "path": path,
         "exists": path != ":memory:" and Path(path).exists(),
         "ladybug_version": ladybug_version,
+        "identity": identity_of(rt.ontology),  # what this ontology stamps; the stored stamp is checked on open
     }
 
 
@@ -298,6 +316,24 @@ def skill_build(rt: Runtime, ontology_ref: str, out: str | None) -> dict[str, An
     name = skill_name(ontology)
     path = build_skill(source, Path(out) if out else data_dir() / "skills" / name)
     return {"skill": name, "path": str(path), "ontology": ontology.name, "source": str(source.resolve())}
+
+
+@skill.command("build-project")
+@click.argument("manifest", type=click.Path(exists=True, dir_okay=False), metavar="MANIFEST")
+@click.option("--out", type=click.Path(file_okay=False), help="Skill directory (default: <data dir>/skills/<name>-memory).")
+@_command
+def skill_build_project(rt: Runtime, manifest: str, out: str | None) -> dict[str, Any]:
+    """Generate one skill for a project: MANIFEST names the work and domain ontologies."""
+    ontology = load_project(manifest)
+    name = skill_name(ontology)
+    path = build_project_skill(manifest, Path(out) if out else data_dir() / "skills" / name)
+    return {
+        "skill": name,
+        "path": str(path),
+        "ontology": ontology.name,
+        "project": True,
+        "source": str(Path(manifest).resolve()),
+    }
 
 
 @main.command()

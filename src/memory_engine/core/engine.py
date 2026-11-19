@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..database.base import Edge, EdgeTargets, GraphDriver, Node
+from ..database.base import META_ID, Edge, EdgeTargets, GraphDriver, Node
 from .casting import CastError, cast_filter, cast_slot, cast_value, is_text_slot
 from .errors import NotFoundError, ValidationError
 from .parser import ClassDef, Ontology, ParentRef, Slot
@@ -135,6 +135,8 @@ class OntologyEngine:
         return self.ontology.containment.upper() if self.ontology.containment else None
 
     def _find(self, node_id: str) -> Node | None:
+        if node_id == META_ID:  # the identity stamp is not a node
+            return None
         return self.db.get_nodes([node_id]).get(node_id)
 
     def _require(self, node_id: str) -> Node:
@@ -311,6 +313,8 @@ class OntologyEngine:
         data = dict(payload)
         id_key = self.ontology.identifier
         node_id = str(data.pop(id_key, "") or "").strip() or self._new_id(cls)
+        if node_id == META_ID:
+            raise ValidationError(f"`{META_ID}` is reserved for the database identity stamp")
         existing = self._find(node_id)
         if existing is not None and existing.cls != cls.name:
             raise ValidationError(f"`{node_id}` is a {existing.cls}, not a {cls.name}")
